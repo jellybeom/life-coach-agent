@@ -1,6 +1,7 @@
 # import
 import os
 import asyncio
+import base64
 import dotenv
 import streamlit as st
 from openai import OpenAI
@@ -138,7 +139,11 @@ async def paint_history():
                 if message["role"] == "user":
                     st.write(message["content"])
                 else:
-                    st.write(message["content"][0]["text"])
+                    # ✅ content가 리스트인지 문자열인지 분기 처리
+                    if isinstance(message["content"], list):
+                        st.write(message["content"][0]["text"])
+                    else:
+                        st.write(message["content"])  # 문자열이면 그대로 출력
         if "type" in message:
             if message["type"] == "web_search_call":
                 with st.chat_message("assistant"):
@@ -146,6 +151,10 @@ async def paint_history():
             if message["type"] == "file_search_call":
                 with st.chat_message("assistant"):
                     st.write(f"[ 목표 문서 검색 ]")
+            if message["type"] == "image_generation_call":
+                image = base64.b64decode(message["result"])
+                with st.chat_message("ai"):
+                    st.image(image)
 
 
 # Run Agent
@@ -156,7 +165,28 @@ async def run_agent(message):
         image_placeholder = st.empty()
         response = ""
 
-        stream = Runner.run_streamed(agent, message, session=session)
+        # 세션에서 role 있는 메시지만 추출
+        all_items = await session.get_items()
+        filtered = []
+        for item in all_items:
+            if "role" not in item:
+                continue
+            role = item["role"]
+            content = item["content"]
+            if role == "assistant" and isinstance(content, list):
+                text = " ".join(
+                    block["text"] for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+                filtered.append({"role": role, "content": text})
+            else:
+                filtered.append({"role": role, "content": content})
+
+        filtered.append({"role": "user", "content": message})
+
+        # ✅ session 파라미터 완전히 제거
+        stream = Runner.run_streamed(agent, filtered)
+        # stream = Runner.run_streamed(agent, message, session=session)
 
         async for event in stream.stream_events():
             if event.type == "raw_response_event":
@@ -174,6 +204,9 @@ async def run_agent(message):
                 if event.data.type == "response.file_search_call.completed":
                     status_container.update(label="✔️ 파일 검색 완료!", state="complete")
 
+                if event.data.type == "response.image_generation_call.partial_image":
+                    image = base64.b64decode(event.data.partial_image_b64)
+                    image_placeholder.image(image)
                 if event.data.type == "response.image_generation_call.in_progress":
                     status_container.update(label="🎨 그리는 중...", state="running")
                 if event.data.type == "response.image_generation_call.generating":
@@ -186,9 +219,15 @@ async def run_agent(message):
                     text_placeholder.write(response.replace("$", "\$"))
 
                 if event.data.type == "response.completed":
-                    # status_container.update(label=" ")
-                    image_placeholder.empty()
-                    text_placeholder.empty()
+                    status_container.update(label="✔️")
+                    # image_placeholder.empty()
+                    # text_placeholder.empty()
+
+        # ✅ for 루프 끝난 직후, with 블록 안에서 저장
+        await session.add_items([
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": [{"type": "text", "text": response}]},
+        ])
 
 
 # 메모리 히스토리 그리기
