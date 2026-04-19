@@ -4,7 +4,14 @@ import asyncio
 import dotenv
 import streamlit as st
 from openai import OpenAI
-from agents import Agent, Runner, SQLiteSession, WebSearchTool, FileSearchTool
+from agents import (
+    Agent,
+    Runner,
+    SQLiteSession,
+    WebSearchTool,
+    FileSearchTool,
+    ImageGenerationTool,
+)
 
 # .env 가져오기
 dotenv.load_dotenv()
@@ -23,11 +30,11 @@ if "agent" not in st.session_state:
 
             ---
 
-            당신은 좋은 좋은 도구를 가지고 있습니다.
+            당신은 세 가지 도구를 가지고 있습니다.
+
             1. Web Search Tool
 
-            [ 반드시 검색해야 할 상황 ]
-            아래 키워드나 주제가 등장하면 유저의 말이 끝나는 즉시 검색을 실행하세요. 또는 동기부여, 자기개발, 습관 형성에 관한 조언을 구하는 경우에도 검색을 실행하세요.
+            아래 키워드나 주제가 등장하면 유저의 말이 끝나는 즉시 검색을 실행하세요.
 
             ▸ 동기부여 관련
             - "의욕이 없어요", "하기 싫어요", "왜 해야 하는지 모르겠어요"
@@ -51,8 +58,6 @@ if "agent" not in st.session_state:
             - 특정 분야(운동, 식단, 수면, 인간관계)의 구체적인 팁을 요청할 때
             - 유저가 막막하다고 표현할 때 → 비슷한 상황을 극복한 사례 검색
 
-            웹 검색 도구를 적극적으로 활용해 신선하고 실질적인 도움을 제공하세요.
-
 
             2. File Search Tool : 유저가 첨부한 개인 목표 파일(텍스트, 문서 등)을 검색하는 도구입니다.
 
@@ -61,23 +66,55 @@ if "agent" not in st.session_state:
             예: "내 목표 어떻게 되고 있어?", "이번 달 계획이 뭐였지?"
             - 특정 목표 카테고리를 언급할 때
             예: "운동", "공부", "저축", "독서", "루틴"
+            - 비전 보드 또는 이미지 생성 요청 시 → 파일에서 목표를 먼저 파악하세요.
             - 유저가 일기나 기록을 참고해 달라고 할 때
 
             [ 검색 후 필수 행동 순서 ]
-            파일 검색 후에는 반드시 아래 순서를 따르세요. 예외 없이 실행합니다.
-
             Step 1. 파일에서 관련 목표와 현재 달성률을 찾아 요약하세요.
             Step 2. 파일 내용을 바탕으로 유저에게 먼저 답변하세요.
-            Step 3. 답변 후 즉시 Web Search Tool 을 실행하세요.
-                    검색어 예시: "[목표 키워드] 실천 팁", "[목표 키워드] 유지하는 방법"
-            Step 4. 웹 검색 결과를 바탕으로 유저 맞춤 추가 조언을 제공하세요.
-            Step 5. 파일에서 정보를 찾지 못한 경우, 유저에게 솔직히 말하고 직접 물어보세요.
+            Step 3. 답변 후 즉시 Web Search Tool 을 실행하여 유저 맞춤 추가 조언을 제공하세요.
+            Step 4. 파일에서 정보를 찾지 못한 경우, 유저에게 솔직히 말하고 직접 물어보세요.
+
+
+            3. Image Generation Tool : 비전 보드, 동기부여 포스터, 진행 상황 시각화 이미지를 생성하는 도구입니다.
+
+            [ 반드시 생성해야 할 상황 ]
+            - 유저가 목표를 달성했다고 말할 때 → 축하 이미지 생성
+            - 유저가 비전 보드를 요청할 때 → File Search 로 목표 파악 후 생성
+            - 유저가 동기부여 포스터를 요청할 때 → 유저의 현재 목표나 상황에 맞춘 포스터 생성
+            - 유저가 진행 상황을 공유할 때 → 진행률을 시각적으로 표현한 이미지 생성
+
+            [ 이미지 생성 유형 ]
+            ▸ 비전 보드
+            - File Search 로 유저의 목표를 먼저 파악하세요.
+            - 목표 키워드(운동, 여행, 커리어 등)를 테마로 구성하세요.
+            - 밝고 긍정적인 분위기, 유저의 목표가 이루어진 미래 장면을 담으세요.
+
+            ▸ 동기부여 포스터
+            - 유저의 현재 고민이나 목표에 맞는 짧고 강렬한 메시지를 포함하세요.
+            - 감성적이고 에너지 넘치는 비주얼로 생성하세요.
+
+            ▸ 진행 상황 시각화
+            - 달성률, 완료 항목, 남은 목표를 직관적으로 표현하세요.
+
+            [ 도구 연계 순서 — 비전 보드 요청 시 ]
+            Step 1. File Search Tool 로 유저의 목표 파악
+            Step 2. 목표 내용을 유저에게 확인
+            Step 3. Image Generation Tool 로 비전 보드 생성
         """,
         tools=[
             WebSearchTool(),
             FileSearchTool(
                 vector_store_ids=[os.getenv("VECTOR_STORE_ID")],
                 max_num_results=3,
+            ),
+            ImageGenerationTool(
+                tool_config={
+                    "type": "image_generation",
+                    "quality": "low",
+                    "output_format": "jpeg",
+                    "partial_images": 1,
+                },
             ),
         ],
     )
@@ -116,6 +153,7 @@ async def run_agent(message):
     with st.chat_message("assistant"):
         status_container = st.status("⏳", expanded=False)
         text_placeholder = st.empty()
+        image_placeholder = st.empty()
         response = ""
 
         stream = Runner.run_streamed(agent, message, session=session)
@@ -136,9 +174,21 @@ async def run_agent(message):
                 if event.data.type == "response.file_search_call.completed":
                     status_container.update(label="✔️ 파일 검색 완료!", state="complete")
 
+                if event.data.type == "response.image_generation_call.in_progress":
+                    status_container.update(label="🎨 그리는 중...", state="running")
+                if event.data.type == "response.image_generation_call.generating":
+                    status_container.update(label="🎨 그리는 중...", state="running")
+                if event.data.type == "response.image_generation_call.completed":
+                    status_container.update(label="✔️ 그리기 완료!", state="complete")
+
                 if event.data.type == "response.output_text.delta":
                     response += event.data.delta
                     text_placeholder.write(response.replace("$", "\$"))
+
+                if event.data.type == "response.completed":
+                    # status_container.update(label=" ")
+                    image_placeholder.empty()
+                    text_placeholder.empty()
 
 
 # 메모리 히스토리 그리기
